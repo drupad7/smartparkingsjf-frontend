@@ -1,4 +1,10 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+// client/src/lib/api.ts  (paste over your existing file)
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
+
+function joinUrl(base: string, path: string) {
+  if (!base) return path; // local dev fallback
+  return base.replace(/\/+$/g, "") + "/" + path.replace(/^\/+/g, "");
+}
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -10,13 +16,15 @@ async function throwIfResNotOk(res: Response) {
 export async function apiRequest(
   method: string,
   url: string,
-  data?: unknown | undefined,
+  data?: unknown,
 ): Promise<Response> {
-  const res = await fetch(url, {
+  const finalUrl = url.startsWith("http") ? url : joinUrl(API_BASE_URL, url);
+  const res = await fetch(finalUrl, {
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
+    credentials: "include", // keep session cookies
+    mode: "cors",
   });
 
   await throwIfResNotOk(res);
@@ -26,11 +34,16 @@ export async function apiRequest(
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
-}) => QueryFunction<T> =
+}) => import("@tanstack/react-query").QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    // queryKey might be ['api', 'users'] or ['/api/users']
+    const path = Array.isArray(queryKey) ? queryKey.join("/") : String(queryKey);
+    const finalUrl = path.startsWith("http") ? path : joinUrl(API_BASE_URL, path);
+
+    const res = await fetch(finalUrl, {
       credentials: "include",
+      mode: "cors",
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
@@ -40,18 +53,3 @@ export const getQueryFn: <T>(options: {
     await throwIfResNotOk(res);
     return await res.json();
   };
-
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      queryFn: getQueryFn({ on401: "throw" }),
-      refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
-    },
-    mutations: {
-      retry: false,
-    },
-  },
-});
